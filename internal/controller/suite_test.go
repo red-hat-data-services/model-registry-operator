@@ -23,6 +23,8 @@ import (
 	"runtime"
 	"testing"
 
+	networkingscheme "k8s.io/api/networking/v1"
+
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 
@@ -70,7 +72,7 @@ var (
 			fileName: "istio.yaml",
 		},
 		{
-			url:      "https://raw.githubusercontent.com/openshift/api/refs/heads/master/route/v1/zz_generated.crd-manifests/routes-Default.crd.yaml",
+			url:      "https://raw.githubusercontent.com/openshift/api/e7ac40fc1590efe8697d76691aa644d1ec3f07a7/route/v1/zz_generated.crd-manifests/routes.crd.yaml",
 			fileName: "route.openshift.io_routes.yaml",
 		},
 	}
@@ -116,6 +118,9 @@ var _ = BeforeSuite(func() {
 	Expect(err).NotTo(HaveOccurred())
 
 	err = modelregistryv1alpha1.AddToScheme(schm)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = networkingscheme.AddToScheme(schm)
 	Expect(err).NotTo(HaveOccurred())
 
 	//+kubebuilder:scaffold:scheme
