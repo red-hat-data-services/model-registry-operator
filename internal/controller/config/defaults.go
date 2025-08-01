@@ -45,7 +45,7 @@ const (
 	OAuthProxyImage         = "OAUTH_PROXY_IMAGE"
 	DefaultGrpcImage        = "quay.io/opendatahub/mlmd-grpc-server:latest"
 	DefaultRestImage        = "quay.io/opendatahub/model-registry:latest"
-	DefaultOAuthProxyImage  = "quay.io/openshift/origin-oauth-proxy:latest"
+	DefaultOAuthProxyImage  = "registry.redhat.io/openshift4/ose-oauth-proxy:latest"
 	RouteDisabled           = "disabled"
 	RouteEnabled            = "enabled"
 	DefaultIstioIngressName = "ingressgateway"
