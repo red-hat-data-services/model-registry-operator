@@ -195,7 +195,7 @@ var _ = Describe("ModelCatalog controller", func() {
 				Expect(postgresDeployment.Labels["app.kubernetes.io/created-by"]).To(Equal("model-registry-operator"))
 				Expect(postgresDeployment.Spec.Template.Spec.Containers).To(HaveLen(1))
 				Expect(postgresDeployment.Spec.Template.Spec.Containers[0].Name).To(Equal("postgresql"))
-				Expect(postgresDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("registry.redhat.io/rhel9/postgresql-16@sha256:3ffdde9a8e930b9cc95d659606487aac1d4d46691c04d2d926a49256d3aee6de"))
+				Expect(postgresDeployment.Spec.Template.Spec.Containers[0].Image).To(Equal("quay.io/sclorg/postgresql-16-c10s:latest"))
 
 				By("Checking if the PostgreSQL Service was created")
 				postgresService := &corev1.Service{}
