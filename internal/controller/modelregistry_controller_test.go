@@ -72,6 +72,8 @@ var _ = Describe("ModelRegistry controller", func() {
 				Expect(err).To(Not(HaveOccurred()))
 				err = os.Setenv(config.RestImage, config.DefaultRestImage)
 				Expect(err).To(Not(HaveOccurred()))
+				err = os.Setenv(config.PostgresImage, config.DefaultPostgresImage)
+				Expect(err).To(Not(HaveOccurred()))
 				err = os.Setenv(config.KubeRBACProxyImage, config.DefaultKubeRBACProxyImage)
 				Expect(err).To(Not(HaveOccurred()))
 			})
@@ -743,7 +745,11 @@ func validateRegistryBase(ctx context.Context, typeNamespaceName types.Namespace
 		mrPod := &corev1.Pod{}
 		mrPod.Name = typeNamespaceName.Name
 		mrPod.Namespace = typeNamespaceName.Namespace
-		mrPod.Labels = map[string]string{"app": typeNamespaceName.Name, "component": "model-registry"}
+		mrPod.Labels = map[string]string{
+			"app":                    typeNamespaceName.Name,
+			"component":              "model-registry",
+			"app.kubernetes.io/name": typeNamespaceName.Name,
+		}
 		mrPod.Spec.Containers = []corev1.Container{
 			{
 				Name:  "model-registry-rest",
