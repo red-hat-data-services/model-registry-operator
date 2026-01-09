@@ -30,7 +30,8 @@ USER 65532:65532
 ENTRYPOINT ["/manager"]
  
 LABEL com.redhat.component="odh-model-registry-operator-container" \
-      name="managed-open-data-hub/odh-model-registry-operator-rhel8" \
+      name="rhoai/odh-model-registry-operator-rhel8" \
+      cpe="cpe:/a:redhat:openshift_ai:2.19::el8" \
       description="Manages lifecycle of RHOAI Model Registry custom resources and associated Kubernetes resources" \
       summary="odh-model-registry-operator-container" \
       maintainer="['managed-open-data-hub@redhat.com']" \
