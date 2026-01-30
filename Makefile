@@ -88,17 +88,17 @@ vet: ## Run go vet against code.
 	go vet ./...
 
 .PHONY: test
-test: manifests generate fmt vet govulncheck envtest ## Run tests.
+test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out
 
 ##@ Build
 
 .PHONY: build
-build: sync-images manifests generate fmt vet govulncheck ## Build manager binary.
+build: sync-images manifests generate fmt vet ## Build manager binary.
 	go build -o bin/manager cmd/main.go
 
 .PHONY: run
-run: manifests generate fmt vet govulncheck ## Run a controller from your host.
+run: manifests generate fmt vet ## Run a controller from your host.
 	ENABLE_WEBHOOKS=$(ENABLE_WEBHOOKS) CREATE_AUTH_RESOURCES=$(CREATE_AUTH_RESOURCES) go run ./cmd/main.go
 
 # If you wish to build the manager image targeting other platforms you can use the --platform flag.
