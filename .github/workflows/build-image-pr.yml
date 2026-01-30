@@ -62,7 +62,7 @@ jobs:
           kubectl describe mr
       - name: Wait for Test Registry Deployment
         run: |
-          ##debug
-          #kubectl describe pods
-          #kubectl logs -l name=model-registry-db || true
-          kubectl wait --for=condition=Available=true modelregistries/modelregistry-sample --timeout=5m
+          #debug
+          kubectl describe pods
+          kubectl logs -l name=model-registry-db || true
+          kubectl wait --for=condition=Available=true modelregistries/modelregistry-sample --timeout=5m || (kubectl describe mr; kubectl logs -n model-registry-operator-system -l control-plane=controller-manager ; kubectl logs --tail -1 -l name=model-registry-db ; kubectl logs --tail -1 -l app=modelregistry-sample -c grpc-container; kubectl logs --tail -1 -l app=modelregistry-sample -c rest-container; exit 1)
