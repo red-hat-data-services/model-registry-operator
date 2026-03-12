@@ -157,6 +157,7 @@ func main() {
 			&rbacv1.ClusterRoleBinding{}:    objOptions,
 			&rbacv1.RoleBinding{}:           objOptions,
 			&rbacv1.Role{}:                  objOptions,
+			&corev1.Secret{}:                {Namespaces: map[string]cache.Config{}},
 		},
 	}
 
