@@ -12,6 +12,19 @@ spec:
   # TODO(user): Add fields here
   grpc:
     port: 9090
+  istio:
+    gateway:
+      grpc:
+        gatewayRoute: enabled
+        port: 443
+        tls:
+          mode: SIMPLE
+      rest:
+        gatewayRoute: enabled
+        port: 443
+        tls:
+          mode: SIMPLE
+    tlsMode: ISTIO_MUTUAL
   rest:
     port: 8080
     serviceRoute: disabled
