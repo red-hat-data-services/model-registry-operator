@@ -23,11 +23,12 @@ import (
 	"github.com/opendatahub-io/model-registry-operator/internal/controller"
 	"github.com/opendatahub-io/model-registry-operator/internal/controller/config"
 	"github.com/opendatahub-io/model-registry-operator/internal/setup"
+	tlsconfig "github.com/opendatahub-io/model-registry-operator/internal/tls"
 	"github.com/opendatahub-io/model-registry-operator/internal/webhook"
+	frameworktls "github.com/opendatahub-io/odh-platform-utilities/framework/tls"
 	oapiconfig "github.com/openshift/api/config/v1"
 	imagev1 "github.com/openshift/api/image/v1"
 	routev1 "github.com/openshift/api/route/v1"
-	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
 	"github.com/spf13/cobra"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -38,7 +39,6 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	"sigs.k8s.io/controller-runtime/pkg/metrics/filters"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -103,7 +103,23 @@ func catalogCacheOptions(registriesNamespace string) cache.Options {
 func runCatalog(_ *cobra.Command, _ []string) error {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
-	capabilities, err := setup.GetCapabilities()
+	// Serve the health probe endpoints before any startup API call so the
+	// kubelet liveness probe keeps passing while startup blocks on
+	// capabilities detection and TLS configuration, each bounded by a
+	// timeout.
+	healthSrv, err := startHealthServer()
+	if err != nil {
+		setupLog.Error(err, "unable to bind health probe address")
+		os.Exit(1)
+	}
+
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		setupLog.Error(err, "error getting cluster config")
+		os.Exit(1)
+	}
+
+	capabilities, err := setup.GetCapabilities(cfg)
 	if err != nil {
 		setupLog.Error(err, "error detecting cluster capabilities")
 		os.Exit(1)
@@ -114,7 +130,7 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 		"hasConfigAPI", capabilities.HasConfigAPI,
 		"hasAuthAPI", capabilities.HasAuthAPI)
 
-	tlsResult, err := setup.ConfigureTLS(scheme, capabilities.HasConfigAPI, setupLog)
+	tlsResult, err := tlsconfig.ConfigureTLS(cfg, scheme, capabilities.HasConfigAPI, setupLog)
 	if err != nil {
 		setupLog.Error(err, "unable to configure TLS")
 		os.Exit(1)
@@ -155,7 +171,7 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Cache:  cacheOptions,
 		Client: client.Options{
@@ -167,9 +183,14 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			TLSOpts: tlsResult.Opts,
 		}),
-		HealthProbeBindAddress: probeAddr,
+		// Probes are served by healthSrv from process start, so the manager's
+		// own probe server is disabled to avoid a port conflict.
+		HealthProbeBindAddress: "0",
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "catalog.opendatahub.io",
+		// Safe: on the cancellation paths where the process exits (SIGTERM,
+		// TLS profile change) the release speeds up the lease handover.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -204,6 +225,7 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 		GatewayName:           gatewayName,
 		GatewayNamespace:      gatewayNamespace,
 		HTTPRouteNamespace:    httpRouteNamespace,
+		ApplicationsNamespace: os.Getenv("POD_NAMESPACE"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Catalog")
 		os.Exit(1)
@@ -216,19 +238,18 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 		}
 	}
 
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
+	// Flip /readyz once the manager's runnables have started (caches synced;
+	// every replica, not just the leader). The manager's own probe server is
+	// disabled; healthSrv owns the port for the whole process.
+	if err := mgr.Add(readinessRunnable{healthSrv: healthSrv}); err != nil {
+		setupLog.Error(err, "unable to register readiness runnable")
 		os.Exit(1)
 	}
 
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 	defer cancel()
 	if capabilities.HasConfigAPI {
-		watcher := &tlspkg.SecurityProfileWatcher{
+		watcher := &frameworktls.SecurityProfileWatcher{
 			Client:                mgr.GetClient(),
 			InitialTLSProfileSpec: tlsResult.Profile,
 			OnProfileChange: func(_ context.Context, _, _ oapiconfig.TLSProfileSpec) {
@@ -251,9 +272,11 @@ func runCatalog(_ *cobra.Command, _ []string) error {
 
 	setupLog.Info("starting catalog manager")
 	if err := mgr.Start(ctx); err != nil {
+		healthSrv.Close()
 		setupLog.Error(err, "problem running catalog manager")
 		os.Exit(1)
 	}
+	healthSrv.Close()
 
 	return nil
 }

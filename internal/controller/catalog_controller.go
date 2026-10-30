@@ -17,7 +17,9 @@ import (
 	catalogv1alpha1 "github.com/opendatahub-io/model-registry-operator/api/catalog/v1alpha1"
 	"github.com/opendatahub-io/model-registry-operator/api/v1beta1"
 	"github.com/opendatahub-io/model-registry-operator/internal/controller/config"
+	tlsconfig "github.com/opendatahub-io/model-registry-operator/internal/tls"
 	"github.com/opendatahub-io/model-registry-operator/internal/utils"
+	configv1 "github.com/openshift/api/config/v1"
 	imagev1 "github.com/openshift/api/image/v1"
 	routev1 "github.com/openshift/api/route/v1"
 	appsv1 "k8s.io/api/apps/v1"
@@ -123,6 +125,9 @@ type CatalogReconciler struct {
 	GatewayName           string
 	GatewayNamespace      string
 	HTTPRouteNamespace    string
+	// ApplicationsNamespace is the platform applications namespace (the operator's own namespace), used to
+	// admit dashboard BFF callers to the catalog by namespace name.
+	ApplicationsNamespace string
 
 	templateApplier *TemplateApplier
 	resourceManager *ResourceManager
@@ -130,6 +135,7 @@ type CatalogReconciler struct {
 
 // CatalogParams is a wrapper for template parameters
 type CatalogParams struct {
+	ProxyTLSArgs            []string
 	Name                    string
 	Namespace               string
 	Component               string
@@ -152,6 +158,7 @@ type CatalogParams struct {
 	GatewayName             string
 	GatewayNamespace        string
 	HTTPRouteNamespace      string
+	ApplicationsNamespace   string
 	PostgresSecretHash      string
 	Proxy                   *catalogv1alpha1.ProxyConfig
 	HFSources               []HFSource
@@ -188,6 +195,7 @@ func (r *CatalogReconciler) buildCatalogParams(catalog *catalogv1alpha1.Catalog,
 		GatewayName:             r.GatewayName,
 		GatewayNamespace:        r.GatewayNamespace,
 		HTTPRouteNamespace:      r.HTTPRouteNamespace,
+		ApplicationsNamespace:   r.ApplicationsNamespace,
 		Proxy:                   catalogProxyOrDefault(catalog.Spec.Proxy),
 	}
 }
@@ -398,6 +406,18 @@ func (r *CatalogReconciler) ensureCatalogResources(ctx context.Context, catalog 
 	crOwner := metav1.NewControllerRef(catalog, catalogv1alpha1.GroupVersion.WithKind("Catalog"))
 	beforeResolution := catalog.DeepCopy()
 	resolutionErr := r.resolveCatalogDataImages(ctx, catalog, catalogParams)
+	if resolutionErr == nil {
+		// Resolve TLS before starting the activation deadline or mutating the
+		// workload. Image failures bypass TLS resolution so containment still runs.
+		reader := r.APIReader
+		if reader == nil {
+			reader = r.Client
+		}
+		catalogParams.ProxyTLSArgs, err = tlsconfig.ResolveProxy(ctx, reader, r.Capabilities.HasConfigAPI)
+		if err != nil {
+			return ctrl.Result{}, fmt.Errorf("resolve proxy TLS: %w", err)
+		}
+	}
 	if err := r.prepareActivation(ctx, catalog, catalogParams); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -779,35 +799,9 @@ func (r *CatalogReconciler) checkDeploymentAvailability(ctx context.Context, key
 		return condition, nil
 	}
 
-	available := false
-	var availableSince time.Time
-	failed := false
-	progressing := true
-	for _, c := range deployment.Status.Conditions {
-		switch c.Type {
-		case appsv1.DeploymentAvailable:
-			if !failed && progressing {
-				available = c.Status == corev1.ConditionTrue
-				if !available {
-					condition.Message = c.Message
-				} else {
-					availableSince = c.LastTransitionTime.Time
-				}
-			}
-		case appsv1.DeploymentProgressing:
-			if c.Status == corev1.ConditionFalse && !failed {
-				available = false
-				progressing = false
-				condition.Message = c.Message
-			}
-		case appsv1.DeploymentReplicaFailure:
-			if c.Status == corev1.ConditionTrue {
-				available = false
-				failed = true
-				condition.Message = c.Message
-			}
-		}
-	}
+	parsed := parseDeploymentConditions(deployment)
+	available := parsed.available
+	availableSince := parsed.availableSince
 
 	if available && (deployment.Status.UpdatedReplicas != desiredReplicas || deployment.Status.Replicas != desiredReplicas || deployment.Status.ReadyReplicas < desiredReplicas || deployment.Status.AvailableReplicas < desiredReplicas) {
 		available = false
@@ -815,7 +809,13 @@ func (r *CatalogReconciler) checkDeploymentAvailability(ctx context.Context, key
 	}
 	if !available {
 		condition.Reason = ReasonDeploymentUnavailable
-		condition.Message = fmt.Sprintf("Deployment is unavailable: %s", condition.Message)
+		// The rollout check above may already have set a more specific
+		// progress message; only the condition parse carries one otherwise.
+		message := parsed.message
+		if message == "" {
+			message = condition.Message
+		}
+		condition.Message = fmt.Sprintf("Deployment is unavailable: %s", message)
 	}
 
 	if deployment.Status.UnavailableReplicas != 0 {
@@ -854,6 +854,9 @@ func (r *CatalogReconciler) checkDeploymentAvailability(ctx context.Context, key
 			return condition, nil
 		}
 
+		// The app can report ready endpoints before it actually serves
+		// requests, so hold back the Available condition
+		// for a short cooldown after the deployment becomes available.
 		if time.Since(availableSince) < deploymentDelay {
 			condition.Status = metav1.ConditionFalse
 			condition.Reason = ReasonDeploymentCooldown
@@ -1479,6 +1482,7 @@ func (r *CatalogReconciler) Apply(params *CatalogParams, templateName string, ob
 	}
 
 	catalogParams := struct {
+		ProxyTLSArgs            []string
 		Name                    string
 		Namespace               string
 		Spec                    *v1beta1.ModelRegistrySpec
@@ -1502,11 +1506,13 @@ func (r *CatalogReconciler) Apply(params *CatalogParams, templateName string, ob
 		GatewayName             string
 		GatewayNamespace        string
 		HTTPRouteNamespace      string
+		ApplicationsNamespace   string
 		PostgresSecretHash      string
 		Proxy                   *catalogv1alpha1.ProxyConfig
 		HFSources               []HFSource
 		HFSecretsHash           string
 	}{
+		ProxyTLSArgs:            params.ProxyTLSArgs,
 		Name:                    params.Name,
 		ActivationAttempt:       params.ActivationAttempt,
 		ActivationBlocked:       params.ActivationBlocked,
@@ -1530,6 +1536,7 @@ func (r *CatalogReconciler) Apply(params *CatalogParams, templateName string, ob
 		GatewayName:             params.GatewayName,
 		GatewayNamespace:        params.GatewayNamespace,
 		HTTPRouteNamespace:      params.HTTPRouteNamespace,
+		ApplicationsNamespace:   params.ApplicationsNamespace,
 		PostgresSecretHash:      params.PostgresSecretHash,
 		Proxy:                   params.Proxy,
 		HFSources:               params.HFSources,
@@ -1725,6 +1732,10 @@ func (r *CatalogReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&networkingv1.NetworkPolicy{}).
 		Owns(&rbac.Role{}).
 		Owns(&rbac.RoleBinding{})
+	if r.Capabilities.HasConfigAPI {
+		b = b.Watches(&configv1.APIServer{}, handler.EnqueueRequestsFromMapFunc(r.catalogsForTLSChange),
+			builder.WithPredicates(proxyTLSChangedPredicate()))
+	}
 	b = b.Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.getCatalogsForPod),
 		builder.WithPredicates(predicate.NewPredicateFuncs(isCatalogPod)))
 
