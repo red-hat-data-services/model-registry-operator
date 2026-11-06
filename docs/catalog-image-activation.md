@@ -7,6 +7,12 @@ through its existing configuration. It receives no activation flags, attempt
 identity, stable-channel information, or report-writing responsibility.
 There is no companion runtime change or additional HTTP proxy to ship.
 
+The optional `spec.catalogDataImage` and `spec.benchmarkDataImage` fields are
+deprecated and retained so existing manifests continue to pass validation.
+Their values are preserved but ignored by the controller. Use
+`spec.catalogDataImageStream` and `spec.benchmarkDataImageStream` to select images
+with the choices described below.
+
 ## Deployment flow
 
 1. Resolve the catalog and benchmark selections independently. Empty fields use
@@ -21,9 +27,11 @@ There is no companion runtime change or additional HTTP proxy to ship.
    pair starts. Both copy init containers must succeed. The benchmark image must
    contain `/app/benchmarks`, but that directory may be empty. Older release
    images lack the serving-runtime catalog;
-   for an empty Catalog image selection, the copy init container supplies an
-   empty serving-runtime list when that file is absent. Explicitly selected
-   images must contain the file and fail preflight when it is missing.
+   empty Catalog image selections and `stable` imports from the release source
+   (or of its known digest) retain the copy init container's empty serving-runtime
+   list when that file is absent. Migration to ImageStreams therefore preserves
+   release-image compatibility. Other selections must contain the file and fail
+   preflight when it is missing. A shipped serving-runtime file is never replaced.
 4. Run `/manager catalog-content-validate` from the operator image as a third init
    container. It reads shipped source YAML and benchmark files before the catalog
    process starts. It makes no database or Kubernetes API calls. On failure, it

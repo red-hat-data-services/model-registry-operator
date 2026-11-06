@@ -24,10 +24,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/opendatahub-io/model-registry-operator/internal/setup"
+	tlsconfig "github.com/opendatahub-io/model-registry-operator/internal/tls"
 	"github.com/opendatahub-io/model-registry-operator/internal/webhook"
 
+	frameworktls "github.com/opendatahub-io/odh-platform-utilities/framework/tls"
 	routev1 "github.com/openshift/api/route/v1"
-	tlspkg "github.com/openshift/controller-runtime-common/pkg/tls"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	networkingv1 "k8s.io/api/networking/v1"
@@ -42,7 +43,6 @@ import (
 
 	oapiconfig "github.com/openshift/api/config/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
-	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	ctrlwebhook "sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -96,7 +96,23 @@ func bindModelRegistryFlags(fs *flag.FlagSet) {
 func runModelRegistry(_ *cobra.Command, _ []string) error {
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&zapOpts)))
 
-	capabilities, err := setup.GetCapabilities()
+	// Serve the health probe endpoints before any startup API call so the
+	// kubelet liveness probe keeps passing while startup blocks on
+	// capabilities detection and TLS configuration, each bounded by a
+	// timeout.
+	healthSrv, err := startHealthServer()
+	if err != nil {
+		setupLog.Error(err, "unable to bind health probe address")
+		os.Exit(1)
+	}
+
+	cfg, err := ctrl.GetConfig()
+	if err != nil {
+		setupLog.Error(err, "error getting cluster config")
+		os.Exit(1)
+	}
+
+	capabilities, err := setup.GetCapabilities(cfg)
 	if err != nil {
 		setupLog.Error(err, "error detecting cluster capabilities")
 		os.Exit(1)
@@ -108,7 +124,7 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 		"hasAuthAPI", capabilities.HasAuthAPI)
 
 	// On OpenShift, fetch the cluster TLS security profile for webhook and metrics servers
-	tlsResult, err := setup.ConfigureTLS(scheme, capabilities.HasConfigAPI, setupLog)
+	tlsResult, err := tlsconfig.ConfigureTLS(cfg, scheme, capabilities.HasConfigAPI, setupLog)
 	if err != nil {
 		setupLog.Error(err, "unable to configure TLS")
 		os.Exit(1)
@@ -166,7 +182,7 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 		cacheOptions.ByObject[&routev1.Route{}] = objOptions
 	}
 
-	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
+	mgr, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme: scheme,
 		Cache:  cacheOptions,
 		// Secrets are read but not created by the operator (user DB credentials, TLS certs),
@@ -182,20 +198,14 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 		WebhookServer: ctrlwebhook.NewServer(ctrlwebhook.Options{
 			TLSOpts: tlsResult.Opts,
 		}),
-		HealthProbeBindAddress: probeAddr,
+		// Probes are served by healthSrv from process start, so the manager's
+		// own probe server is disabled to avoid a port conflict.
+		HealthProbeBindAddress: "0",
 		LeaderElection:         enableLeaderElection,
 		LeaderElectionID:       "85f368d1.opendatahub.io",
-		// LeaderElectionReleaseOnCancel defines if the leader should step down voluntarily
-		// when the Manager ends. This requires the binary to immediately end when the
-		// Manager is stopped, otherwise, this setting is unsafe. Setting this significantly
-		// speeds up voluntary leader transitions as the new leader don't have to wait
-		// LeaseDuration time first.
-		//
-		// In the default scaffold provided, the program ends immediately after
-		// the manager stops, so would be fine to enable this option. However,
-		// if you are doing or is intended to do any operation such as perform cleanups
-		// after the manager stops then its usage might be unsafe.
-		// LeaderElectionReleaseOnCancel: true,
+		// Safe: on the cancellation paths where the process exits (SIGTERM,
+		// TLS profile change) the release speeds up the lease handover.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")
@@ -262,12 +272,11 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 	}
 	//+kubebuilder:scaffold:builder
 
-	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up health check")
-		os.Exit(1)
-	}
-	if err := mgr.AddReadyzCheck("readyz", healthz.Ping); err != nil {
-		setupLog.Error(err, "unable to set up ready check")
+	// Flip /readyz once the manager's runnables have started (caches synced;
+	// every replica, not just the leader). The manager's own probe server is
+	// disabled; healthSrv owns the port for the whole process.
+	if err := mgr.Add(readinessRunnable{healthSrv: healthSrv}); err != nil {
+		setupLog.Error(err, "unable to register readiness runnable")
 		os.Exit(1)
 	}
 
@@ -275,7 +284,7 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 	ctx, cancel := context.WithCancel(ctrl.SetupSignalHandler())
 	defer cancel()
 	if capabilities.HasConfigAPI {
-		watcher := &tlspkg.SecurityProfileWatcher{
+		watcher := &frameworktls.SecurityProfileWatcher{
 			Client:                mgr.GetClient(),
 			InitialTLSProfileSpec: tlsResult.Profile,
 			OnProfileChange: func(_ context.Context, _, _ oapiconfig.TLSProfileSpec) {
@@ -302,9 +311,11 @@ func runModelRegistry(_ *cobra.Command, _ []string) error {
 
 	setupLog.Info("starting manager")
 	if err := mgr.Start(ctx); err != nil {
+		healthSrv.Close()
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+	healthSrv.Close()
 
 	return nil
 }

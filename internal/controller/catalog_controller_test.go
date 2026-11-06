@@ -83,6 +83,7 @@ var _ = Describe("Catalog controller", func() {
 					HasUserAPI:   false,
 					HasConfigAPI: false,
 				},
+				ApplicationsNamespace: "test-applications",
 			}
 		})
 
@@ -1301,7 +1302,19 @@ labels:
 			Expect(catalogReconciler.Apply(catalogReconciler.buildCatalogParams(catalog, nil, nil, nil, ""),
 				"catalog-kube-rbac-proxy-network-policy.yaml.tmpl", ingressPolicy)).To(Succeed())
 			expectIngressPolicy(ingressPolicy, 8443)
-			expectCatalogIngressPeers(ingressPolicy)
+			expectCatalogIngressPeers(ingressPolicy, "test-applications")
+		})
+
+		It("Should omit the model-registry-ui peer when the applications namespace is unknown", func() {
+			catalog := &catalogv1alpha1.Catalog{
+				ObjectMeta: metav1.ObjectMeta{Name: "catalog", Namespace: namespaceName},
+			}
+			catalogReconciler.ApplicationsNamespace = ""
+			ingressPolicy := &networkingv1.NetworkPolicy{}
+			Expect(catalogReconciler.Apply(catalogReconciler.buildCatalogParams(catalog, nil, nil, nil, ""),
+				"catalog-kube-rbac-proxy-network-policy.yaml.tmpl", ingressPolicy)).To(Succeed())
+			expectIngressPolicy(ingressPolicy, 8443)
+			expectCatalogIngressPeers(ingressPolicy, "")
 		})
 
 		It("Should remove the applications namespace peer from an existing catalog ingress NetworkPolicy", func() {
@@ -1329,7 +1342,7 @@ labels:
 			updated := &networkingv1.NetworkPolicy{}
 			Expect(k8sClient.Get(ctx, client.ObjectKeyFromObject(newPolicy), updated)).To(Succeed())
 			expectIngressPolicy(updated, 8443)
-			expectCatalogIngressPeers(updated)
+			expectCatalogIngressPeers(updated, "test-applications")
 			Expect(k8sClient.Delete(ctx, updated)).To(Succeed())
 		})
 
@@ -1441,6 +1454,82 @@ labels:
 			Expect(err).NotTo(HaveOccurred())
 			Expect(condition.Status).To(Equal(metav1.ConditionTrue))
 			Expect(condition.Reason).To(Equal(ReasonDeploymentAvailable))
+		})
+
+		It("Should keep the rollout progress message when the deployment is available but the rollout is incomplete", func() {
+			dep := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: catalogResourceName, Namespace: namespaceName},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": catalogResourceName}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": catalogResourceName}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "catalog", Image: "example.com/catalog:latest"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, dep)).To(Succeed())
+			// DeploymentAvailable=True but the rollout has not caught up: the
+			// unavailable message must retain the rollout progress detail.
+			status := completedCatalogDeploymentStatus(dep)
+			status.UpdatedReplicas = 0
+			dep.Status = status
+			Expect(k8sClient.Status().Update(ctx, dep)).To(Succeed())
+
+			condition, err := catalogReconciler.checkDeploymentAvailability(ctx,
+				types.NamespacedName{Name: catalogResourceName, Namespace: namespaceName},
+				catalogResourceName,
+				catalogResourceName,
+				nil,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(ReasonDeploymentUnavailable))
+			Expect(condition.Message).To(ContainSubstring("Waiting for rollout completion"))
+		})
+
+		It("Should hold back the Catalog deployment behind the cooldown when the Available transition is fresh", func() {
+			dep := &appsv1.Deployment{
+				ObjectMeta: metav1.ObjectMeta{Name: catalogResourceName, Namespace: namespaceName},
+				Spec: appsv1.DeploymentSpec{
+					Selector: &metav1.LabelSelector{MatchLabels: map[string]string{"app": catalogResourceName}},
+					Template: corev1.PodTemplateSpec{
+						ObjectMeta: metav1.ObjectMeta{Labels: map[string]string{"app": catalogResourceName}},
+						Spec:       corev1.PodSpec{Containers: []corev1.Container{{Name: "catalog", Image: "example.com/catalog:latest"}}},
+					},
+				},
+			}
+			Expect(k8sClient.Create(ctx, dep)).To(Succeed())
+			dep.Status = completedCatalogDeploymentStatus(dep)
+			// Pins the availability cooldown: a freshly transitioned Available
+			// condition with ready endpoints must stay behind the cooldown,
+			// because the application can report ready endpoints before it
+			// actually serves requests.
+			dep.Status.Conditions[0].LastTransitionTime = metav1.Now()
+			Expect(k8sClient.Status().Update(ctx, dep)).To(Succeed())
+
+			ready := true
+			Expect(k8sClient.Create(ctx, &discoveryv1.EndpointSlice{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      catalogResourceName + "-fresh",
+					Namespace: namespaceName,
+					Labels:    map[string]string{discoveryv1.LabelServiceName: catalogResourceName},
+				},
+				AddressType: discoveryv1.AddressTypeIPv4,
+				Endpoints: []discoveryv1.Endpoint{{
+					Addresses:  []string{"10.0.0.1"},
+					Conditions: discoveryv1.EndpointConditions{Ready: &ready},
+				}},
+			})).To(Succeed())
+
+			condition, err := catalogReconciler.checkDeploymentAvailability(ctx,
+				types.NamespacedName{Name: catalogResourceName, Namespace: namespaceName},
+				catalogResourceName,
+				catalogResourceName,
+				nil,
+			)
+			Expect(err).NotTo(HaveOccurred())
+			Expect(condition.Status).To(Equal(metav1.ConditionFalse))
+			Expect(condition.Reason).To(Equal(ReasonDeploymentCooldown))
 		})
 	})
 })

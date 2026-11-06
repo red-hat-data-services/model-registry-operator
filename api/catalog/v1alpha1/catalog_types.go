@@ -75,11 +75,28 @@ type CatalogSpec struct {
 	// +optional
 	Database CatalogDatabase `json:"database,omitempty"`
 
+	// CatalogDataImage is retained for compatibility with existing manifests.
+	//
+	// Deprecated: ignored by the controller. Use CatalogDataImageStream to select
+	// the catalog data image.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	CatalogDataImage *string `json:"catalogDataImage,omitempty"`
+
+	// BenchmarkDataImage is retained for compatibility with existing manifests.
+	//
+	// Deprecated: ignored by the controller. Use BenchmarkDataImageStream to select
+	// the benchmark data image.
+	// +optional
+	// +kubebuilder:validation:MaxLength=128
+	BenchmarkDataImage *string `json:"benchmarkDataImage,omitempty"`
+
 	// CatalogDataImageStream independently selects the catalog data image.
 	// Empty uses its current release default. "stable" follows the managed
 	// ImageStream (OpenShift only); sha256:<64 lowercase hex> pins a digest in
 	// its configured data repository. The benchmark field may select a different image.
-	// AIHub creates the initial Catalog with both fields unset to use release defaults.
+	// On OpenShift, AIHub initializes new Catalogs and migrates existing Catalogs
+	// once to stable for both fields. Subsequent administrator selections are preserved.
 	// Selection/import failures make Catalog and AIHub unready. Successful
 	// resolution permits rollout; readiness also requires a healthy workload.
 	// Deployment scale-down is temporary containment. Runtime validation and
