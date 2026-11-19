@@ -55,14 +55,15 @@ jobs:
           IMG_VERSION: ${{ steps.tags.outputs.tag }}
           IMG: "model-registry-operator:${{ steps.tags.outputs.tag }}"
         run: |
+          kubectl create namespace model-registries --dry-run=client -o yaml | kubectl apply -f -
           make deploy
       - name: Create Test Registry
         run: |
-          kubectl apply -k config/samples/mysql/
-          kubectl describe mr
+          kubectl apply -n model-registries -k config/samples/mysql/
+          kubectl describe mr -n model-registries
       - name: Wait for Test Registry Deployment
         run: |
           ##debug
-          #kubectl describe pods
-          #kubectl logs -l name=model-registry-db || true
-          kubectl wait --for=condition=Available=true modelregistries/modelregistry-sample --timeout=5m || (kubectl describe mr; kubectl logs -n model-registry-operator-system -l control-plane=controller-manager ; exit 1)
+          #kubectl describe pods -n model-registries
+          #kubectl logs -n model-registries -l name=model-registry-db || true
+          kubectl wait -n model-registries --for=condition=Available=true modelregistries/modelregistry-sample --timeout=5m || (kubectl describe mr -n model-registries; kubectl logs -n model-registry-operator-system -l control-plane=controller-manager ; exit 1)

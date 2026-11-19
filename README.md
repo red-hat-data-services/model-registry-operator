@@ -55,13 +55,20 @@ Deployment, ServiceAccount, and bindings from the applications namespace and rev
 legacy token Secrets. Application editors must not have workload or Secret access in
 the controller namespace; the operator still manages privileged OpenShift Groups.
 
-1. Deploy the controller to the cluster using the `latest` docker image:
+1. Create the registry namespace and deploy the controller using the `latest` docker image:
 
 ```sh
+kubectl create namespace model-registries --dry-run=client -o yaml | kubectl apply -f -
 make deploy
 ```
 
 2. The operator includes multiple samples that use [kustomize](https://kustomize.io/) to create a sample model registry `modelregistry-sample`.
+
+For the default deployment, select the registry namespace before running the sample commands:
+
+```sh
+kubectl config set-context --current --namespace=model-registries
+```
 
 * [MySQL](config/samples/mysql) plain Kubernetes model registry services with a sample MySQL database
 * [MySQL with OAuth Proxy](config/samples/oauth/mysql) MySQL database, and OAuth Proxy secured model registry service
