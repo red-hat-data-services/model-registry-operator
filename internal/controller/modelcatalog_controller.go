@@ -492,7 +492,20 @@ func (r *ModelCatalogReconciler) deleteFromTemplate(ctx context.Context, params 
 	if err := r.Apply(params, templateName, obj); err != nil {
 		return ResourceUnchanged, err
 	}
-	err := r.Client.Delete(ctx, obj)
+	var options []client.DeleteOption
+	if _, clusterScoped := obj.(*rbac.ClusterRoleBinding); clusterScoped {
+		if err := r.Client.Get(ctx, client.ObjectKeyFromObject(obj), obj); err != nil {
+			return ResourceUnchanged, client.IgnoreNotFound(err)
+		}
+		// The catalog binding has a fixed cluster-wide name. Another namespace's
+		// catalog must survive cleanup by this operator instance.
+		if obj.GetLabels()["modelregistry.opendatahub.io/namespace"] != params.Namespace {
+			return ResourceUnchanged, nil
+		}
+		uid, version := obj.GetUID(), obj.GetResourceVersion()
+		options = append(options, client.Preconditions{UID: &uid, ResourceVersion: &version})
+	}
+	err := r.Client.Delete(ctx, obj, options...)
 	if err != nil {
 		return ResourceUnchanged, client.IgnoreNotFound(err)
 	}

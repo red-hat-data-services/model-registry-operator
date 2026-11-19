@@ -164,13 +164,15 @@ func main() {
 		cacheOptions.ByObject[&routev1.Route{}] = objOptions
 	}
 
+	if registriesNamespace != "" {
+		cacheOptions.DefaultNamespaces = map[string]cache.Config{registriesNamespace: {}}
+	}
+
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Cache:  cacheOptions,
-		// Secrets are read but not created by the operator (user DB credentials, TLS certs),
-		// so they can't be label-filtered like operator-created resources above.
-		// DisableFor bypasses the cache for Secrets, using direct API reads instead.
-		// This is safe because no Owns()/Watches()/For() registers an informer for Secrets.
+		// Read OAuth cookie Secrets directly. The catalog's Secret watch uses the
+		// namespace-scoped cache; DisableFor only bypasses cached client reads.
 		Client: client.Options{
 			Cache: &client.CacheOptions{
 				DisableFor: []client.Object{&corev1.Secret{}},

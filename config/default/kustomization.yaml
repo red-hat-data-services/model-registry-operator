@@ -27,6 +27,45 @@ resources:
 #- ../webhook
 #- ../prometheus
 
+# Workload permissions belong to the registry namespace. The RoleBinding's
+# ServiceAccount subject stays in the separate controller namespace.
+replacements:
+- source:
+    kind: ServiceAccount
+    name: controller-manager
+    fieldPath: metadata.name
+  targets:
+  - select:
+      kind: RoleBinding
+      name: registry-rolebinding
+    fieldPaths:
+    - subjects.[kind=ServiceAccount].name
+- source:
+    kind: ServiceAccount
+    name: controller-manager
+    fieldPath: metadata.namespace
+  targets:
+  - select:
+      kind: RoleBinding
+      name: registry-rolebinding
+    fieldPaths:
+    - subjects.[kind=ServiceAccount].namespace
+- source:
+    kind: Deployment
+    name: controller-manager
+    fieldPath: spec.template.spec.containers.[name=manager].env.[name=REGISTRIES_NAMESPACE].value
+  targets:
+  - select:
+      kind: Role
+      name: manager-role
+    fieldPaths:
+    - metadata.namespace
+  - select:
+      kind: RoleBinding
+      name: registry-rolebinding
+    fieldPaths:
+    - metadata.namespace
+
 # Protect the /metrics endpoint by putting it behind auth.
 # If you want your controller-manager to expose the /metrics
 # endpoint w/o any authn/z, please comment the following line.

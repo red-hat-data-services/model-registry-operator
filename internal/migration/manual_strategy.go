@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/opendatahub-io/model-registry-operator/internal/controller/config"
+
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -29,7 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-//+kubebuilder:rbac:groups=modelregistry.opendatahub.io,resources=modelregistries,verbs=get;list;watch;update;patch
+//+kubebuilder:rbac:groups=modelregistry.opendatahub.io,resources=modelregistries,verbs=get;list;watch;update;patch,namespace=system
 
 // ManualStrategy implements migration by re-reading and re-writing resources
 // This triggers the conversion webhook and forces storage in the new version
@@ -77,7 +79,9 @@ func (m *ManualStrategy) PerformMigration(ctx context.Context, crd *apiextension
 		Kind:    "ModelRegistryList",
 	})
 
-	if err := m.List(ctx, list); err != nil {
+	// Unstructured reads bypass the manager's cache, so explicitly scope the
+	// request to the namespace covered by the operator's Role.
+	if err := m.List(ctx, list, client.InNamespace(config.GetRegistriesNamespace())); err != nil {
 		return fmt.Errorf("failed to list ModelRegistry resources: %w", err)
 	}
 
