@@ -37,13 +37,38 @@ To disable external access to the service from outside the cluster, set the prop
 For non-OpenShift clusters, external access has to be manually configured using [Kubernetes Gateway](https://kubernetes.io/docs/concepts/services-networking/gateway/) configuration. 
 
 ### Running on the cluster
-1. Deploy the controller to the cluster using the `latest` docker image:
+The controller runs in `model-registry-operator-system`, separately from the namespace
+it manages (`model-registries` by default; ODH/RHOAI use `REGISTRIES_NAMESPACE`). Create
+the registry namespace before deployment and use it for registry CRs, database/TLS
+Secrets, and sample resources.
+
+The RHOAI overlay defaults to `rhoai-model-registries`. Set `REGISTRIES_NAMESPACE` in
+`config/overlays/odh/params.env` to use a custom namespace; the manager and its workload
+Role/RoleBinding use the same value. This must be a concrete namespace when rendering
+the manifests, because workload permissions are scoped to that namespace.
+
+For ODH/RHOAI upgrades, the parent installer must preserve the isolated controller
+namespace, the registry Role/RoleBinding namespace, and the webhook Service references.
+Set `APPLICATIONS_NAMESPACE` to keep the upload-job Template in the applications namespace.
+After the new controller and webhook certificates are ready, remove the old controller
+Deployment, ServiceAccount, and bindings from the applications namespace and revoke its
+legacy token Secrets. Application editors must not have workload or Secret access in
+the controller namespace; the operator still manages privileged OpenShift Groups.
+
+1. Create the registry namespace and deploy the controller using the `latest` docker image:
 
 ```sh
+kubectl create namespace model-registries --dry-run=client -o yaml | kubectl apply -f -
 make deploy
 ```
 
 2. The operator includes multiple samples that use [kustomize](https://kustomize.io/) to create a sample model registry `modelregistry-sample`.
+
+For the default deployment, select the registry namespace before running the sample commands:
+
+```sh
+kubectl config set-context --current --namespace=model-registries
+```
 
 * [MySQL](config/samples/mysql) plain Kubernetes model registry services with a sample MySQL database
 * [MySQL with OAuth Proxy](config/samples/oauth/mysql) MySQL database, and OAuth Proxy secured model registry service

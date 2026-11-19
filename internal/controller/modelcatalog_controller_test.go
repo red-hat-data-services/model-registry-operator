@@ -275,6 +275,38 @@ var _ = Describe("ModelCatalog controller", func() {
 		})
 
 		Context("cleanupCatalogResources method", func() {
+			DescribeTable("Should only delete the catalog binding owned by its namespace",
+				func(ownerNamespace string, shouldDelete bool) {
+					if ownerNamespace == "target" {
+						ownerNamespace = namespaceName
+					}
+					binding := &rbac.ClusterRoleBinding{
+						ObjectMeta: metav1.ObjectMeta{
+							Name:   modelCatalogName + "-auth-delegator",
+							Labels: map[string]string{"modelregistry.opendatahub.io/namespace": ownerNamespace},
+						},
+						RoleRef: rbac.RoleRef{APIGroup: rbac.GroupName, Kind: "ClusterRole", Name: "system:auth-delegator"},
+					}
+					Expect(k8sClient.Create(ctx, binding)).To(Succeed())
+					DeferCleanup(func() { _ = k8sClient.Delete(ctx, binding) })
+
+					_, err := catalogReconciler.cleanupCatalogResources(ctx)
+					Expect(err).NotTo(HaveOccurred())
+					actual := &rbac.ClusterRoleBinding{}
+					err = k8sClient.Get(ctx, types.NamespacedName{Name: binding.Name}, actual)
+					if shouldDelete {
+						Expect(errors.IsNotFound(err)).To(BeTrue())
+					} else {
+						Expect(err).NotTo(HaveOccurred())
+						Expect(actual.UID).To(Equal(binding.UID))
+						Expect(actual.ResourceVersion).To(Equal(binding.ResourceVersion))
+					}
+				},
+				Entry("matching namespace", "target", true),
+				Entry("another namespace", "another-catalog-namespace", false),
+				Entry("unknown ownership", "", false),
+			)
+
 			It("Should successfully delete all catalog resources", func() {
 				By("First creating catalog resources")
 				_, err := catalogReconciler.ensureCatalogResources(ctx)

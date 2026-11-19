@@ -86,7 +86,7 @@ spec:
           - name: CREATE_AUTH_RESOURCES
             value: "true"
           - name: REGISTRIES_NAMESPACE
-            value: ""
+            value: model-registries
           - name: DEFAULT_DOMAIN
             value: ""
           - name: ENABLE_MODEL_CATALOG

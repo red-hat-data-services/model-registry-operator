@@ -2,6 +2,26 @@
 - source:
     kind: ConfigMap
     name: model-registry-operator-parameters
+    fieldPath: data.APPLICATIONS_NAMESPACE
+  targets:
+    - select:
+        kind: Template
+        name: jobs-async-upload-s3-to-oci-template
+      fieldPaths:
+        - metadata.namespace
+- source:
+    kind: ServiceAccount
+    name: controller-manager
+    fieldPath: metadata.namespace
+  targets:
+    - select:
+        kind: RoleBinding
+        name: registry-rolebinding
+      fieldPaths:
+        - subjects.[kind=ServiceAccount].namespace
+- source:
+    kind: ConfigMap
+    name: model-registry-operator-parameters
     fieldPath: data.IMAGES_MODELREGISTRY_OPERATOR
   targets:
     - select:
@@ -64,6 +84,16 @@
     name: model-registry-operator-parameters
     fieldPath: data.REGISTRIES_NAMESPACE
   targets:
+    - select:
+        kind: Role
+        name: manager-role
+      fieldPaths:
+        - metadata.namespace
+    - select:
+        kind: RoleBinding
+        name: registry-rolebinding
+      fieldPaths:
+        - metadata.namespace
     - select:
         kind: Deployment
         name: controller-manager

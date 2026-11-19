@@ -5,6 +5,85 @@ metadata:
   name: manager-role
 rules:
 - apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - authentication.k8s.io
+  resources:
+  - tokenreviews
+  verbs:
+  - create
+- apiGroups:
+  - authorization.k8s.io
+  resources:
+  - subjectaccessreviews
+  verbs:
+  - create
+- apiGroups:
+  - components.platform.opendatahub.io
+  resources:
+  - modelregistries
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - config.openshift.io
+  resources:
+  - ingresses
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - migration.k8s.io
+  resources:
+  - storageversionmigrations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - rbac.authorization.k8s.io
+  resources:
+  - clusterrolebindings
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - user.openshift.io
+  resources:
+  - groups
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: manager-role
+  namespace: system
+rules:
+- apiGroups:
   - ""
   resources:
   - configmaps
@@ -45,57 +124,9 @@ rules:
   - update
   - watch
 - apiGroups:
-  - apiextensions.k8s.io
-  resources:
-  - customresourcedefinitions
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
   - apps
   resources:
   - deployments
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - authentication.k8s.io
-  resources:
-  - tokenreviews
-  verbs:
-  - create
-- apiGroups:
-  - authorization.k8s.io
-  resources:
-  - subjectaccessreviews
-  verbs:
-  - create
-- apiGroups:
-  - components.platform.opendatahub.io
-  resources:
-  - modelregistries
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - config.openshift.io
-  resources:
-  - ingresses
-  verbs:
-  - get
-  - list
-  - watch
-- apiGroups:
-  - migration.k8s.io
-  resources:
-  - storageversionmigrations
   verbs:
   - create
   - delete
@@ -145,7 +176,6 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
-  - clusterrolebindings
   - rolebindings
   - roles
   verbs:
@@ -161,18 +191,6 @@ rules:
   resources:
   - routes
   - routes/custom-host
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - user.openshift.io
-  resources:
-  - groups
   verbs:
   - create
   - delete
