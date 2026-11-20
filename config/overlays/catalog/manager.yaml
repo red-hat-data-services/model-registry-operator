@@ -47,9 +47,9 @@ spec:
           - name: RELATED_IMAGE_POSTGRESQL_16_IMAGE
             value: quay.io/sclorg/postgresql-16-c10s:latest
           - name: RELATED_IMAGE_ODH_MODEL_METADATA_COLLECTION_IMAGE
-            value: quay.io/opendatahub/odh-model-metadata-collection:latest
+            value: registry.redhat.io/rhai/ai-hub-catalog-rhel9@sha256:0e396f316c5da71164d97e36a2d950be1ba15fc3659b177797a7f0b8b74e5b96
           - name: RELATED_IMAGE_ODH_MODEL_PERFORMANCE_DATA_IMAGE
-            value: quay.io/opendatahub/odh-model-metadata-collection:latest
+            value: registry.redhat.io/rhai/ai-hub-catalog-rhel9@sha256:0e396f316c5da71164d97e36a2d950be1ba15fc3659b177797a7f0b8b74e5b96
           - name: CATALOG_DATA_IMAGE_STREAM_SOURCE
             value: ""
           - name: BENCHMARK_DATA_IMAGE_STREAM_SOURCE
